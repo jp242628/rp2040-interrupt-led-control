@@ -43,10 +43,10 @@ O código está bem estruturado e comentado para facilitar o entendimento. As pr
 
 1. Clone o repositório:
     ```sh
-    git clone https://github.com/seu-usuario/seu-repositorio.git
+    git clone https://github.com/jp242628/rp2040-interrupt-led-control.git
     ```
 2. Navegue até o diretório do projeto:
     ```sh
-    cd seu-repositorio
+    cd rp2040-interrupt-led-control
     ```
 3. Compile e carregue o código no Raspberry Pi Pico utilizando o ambiente de desenvolvimento de sua preferência.

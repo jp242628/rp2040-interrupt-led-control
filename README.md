@@ -5,6 +5,12 @@ Repositório do projeto da EmbarcaTech - Unidade 4 (Microcontroladores): control
 
 Este projeto demonstra o controle de uma matriz de LEDs WS2812 (5x5) utilizando um Raspberry Pi Pico. O controle é feito através de dois botões que incrementam e decrementam o número exibido na matriz. Além disso, um LED RGB comum é utilizado para piscar a uma taxa de 5 vezes por segundo.
 
+### Vídeo de Demonstração
+O vídeo de demonstração deste projeto foi entregue no Moodle, conforme solicitado. Nele, são mostradas as seguintes funcionalidades:
+- Controle do LED RGB piscando em vermelho.
+- Incremento e decremento dos números na matriz de LEDs WS2812.
+- Efeitos visuais dos números de 0 a 9 na matriz.
+
 ## Funcionalidades
 
 1. **Uso de interrupções**: Todas as funcionalidades relacionadas aos botões são implementadas utilizando rotinas de interrupção (IRQ).

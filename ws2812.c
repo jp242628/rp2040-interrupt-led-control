@@ -83,7 +83,7 @@ void exibir_numero(uint8_t num) {
         {1,0,1,1,1, 1,0,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,1,1,1,1}  // 9
     };
 
-    // Atualiza o buffer com o padrão do número
+    // Atualiza o buffer com o padrão do número selecionado
     for (int i = 0; i < NUM_PIXELS; i++) {
         if (padroes_numeros[num][i]) {
             buffer_leds[i] = converter_rgb_u32(255, 0, 0); // Vermelho
@@ -116,7 +116,7 @@ int main() {
     gpio_set_irq_enabled(BUTTON_B_PIN, GPIO_IRQ_EDGE_FALL, true); // Habilita interrupção de borda de descida
 
     // Apenas um callback para ambos os botões
-    gpio_set_irq_enabled_with_callback(BUTTON_A_PIN, GPIO_IRQ_EDGE_FALL, true, &botao_callback);
+    gpio_set_irq_enabled_with_callback(BUTTON_A_PIN, GPIO_IRQ_EDGE_FALL, true, &botao_callback); 
     gpio_set_irq_enabled_with_callback(BUTTON_B_PIN, GPIO_IRQ_EDGE_FALL, true, &botao_callback);
 
     // Configuração do LED RGB
@@ -130,6 +130,7 @@ int main() {
     bool estado_led_rgb = false; // Estado do LED RGB
     uint32_t ultimo_tempo_troca_led_rgb = 0; // Último tempo de troca do LED RGB
 
+    // Loop principal para exibir o número na matriz de LEDs
     while (1) {
         // Atualiza o buffer com o número a ser exibido
         exibir_numero(numero_exibido);

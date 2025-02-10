@@ -1,156 +1,230 @@
-#include <stdio.h> // Biblioteca padrão de E/S
-#include <stdlib.h> // Biblioteca padrão
-#include "pico/stdlib.h" // Biblioteca Pico Standard Library
-#include "hardware/pio.h" // Funções para configuração do PIO
-#include "hardware/clocks.h" // Funções para configuração dos clocks
-#include "ws2812.pio.h" // Programa para a matriz de LEDs WS2812
+// Bibliotecas necessárias para Raspberry Pi Pico W
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include "hardware/pio.h"
+#include "hardware/gpio.h"
+#include "hardware/i2c.h"
+#include "pico/stdlib.h"
+#include "ws2812.pio.h"
+#include "inc/font.h"
+#include "inc/ssd1306.h"
+#include "pico/stdio_uart.h"
+#include "pico/stdio_usb.h"
 
-#define IS_RGBW false // Define se o LED é RGB (false) ou RGBW (true)
-#define NUM_PIXELS 25 // Número de LEDs na matriz (5x5)
-#define WS2812_PIN 7 // Pino de dados da matriz de LEDs
-#define BUTTON_A_PIN 5 // Pino do botão A
-#define BUTTON_B_PIN 6 // Pino do botão B
-#define LED_RGB_RED_PIN 11 // Pino do LED RGB vermelho
-#define LED_RGB_GREEN_PIN 12 // Pino do LED RGB verde
-#define LED_RGB_BLUE_PIN 13 // Pino do LED RGB azul
+// Definições de hardware
+#define PINO_MATRIZ 7      // Pino de dados da matriz de LEDs
+#define NUM_PIXELS 25      // Número de LEDs na matriz
+#define LED_VERMELHO 13    // Pino do LED vermelho
+#define LED_VERDE 11       // Pino do LED verde
+#define LED_AZUL 12        // Pino do LED azul
+#define BOTAO_A 5          // Pino do botão A
+#define BOTAO_B 6          // Pino do botão B
+#define PORTA_I2C i2c1     // Porta I2C
+#define I2C_SDA 14         // Pino SDA
+#define I2C_SCL 15         // Pino SCL
+#define DEBOUNCE_DELAY 200 // Define para o atraso de debounce
 
-// Variáveis globais para controle do LED e cor
-uint8_t numero_exibido = 0; // Número exibido na matriz (0-9)
+// Variáveis globais
+bool estadoLedVerde = false;
+bool estadoLedAzul = false;
 
-// Variáveis de debouncing para os botões
+// Funções
 uint32_t ultimo_tempo_botao_a = 0;
 uint32_t ultimo_tempo_botao_b = 0;
-#define DEBOUNCE_DELAY 200 // tempo de debounce em milissegundos
 
-// Função para enviar um pixel para a matriz de LEDs
-static inline void enviar_pixel(uint32_t pixel_grb) {
-    pio_sm_put_blocking(pio0, 0, pixel_grb << 8u); // Envia o pixel para a matriz
-}
+// Programa para controlar a matriz de LEDs WS2812
+PIO pio = pio0; // Pino de saída
+uint sm;        // Máquina de estado
+uint offset;    // Offset do programa
+ssd1306_t ssd;  // Display
 
-// Função para converter valores RGB para um único valor de 32 bits
-static inline uint32_t converter_rgb_u32(uint8_t r, uint8_t g, uint8_t b) {
-    return ((uint32_t)(r) << 8) | ((uint32_t)(g) << 16) | (uint32_t)(b); // Formato GRB (WS2812)
-}
-
-uint32_t buffer_leds[NUM_PIXELS] = {0}; // Buffer para armazenar as cores de todos os LEDs
-
-// Função para apagar todos os LEDs
-void atualizar_buffer_leds() {
-    for (int i = 0; i < NUM_PIXELS; i++) {
-        buffer_leds[i] = 0; // Desliga todos os LEDs
-    }
-}
-
-// Função para enviar o estado do buffer de LEDs para a matriz
-void definir_leds_do_buffer() {
-    for (int i = 0; i < NUM_PIXELS; i++) {
-        enviar_pixel(buffer_leds[i]); // Envia o estado de cada LED
-    }
-}
-
-// Callback para tratar interrupções dos botões
-void botao_callback(uint gpio, uint32_t eventos) {
-    uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
-
-    // Verifica qual botão foi pressionado e atualiza o número exibido
-    // Botão A incrementa o número exibido
-    if (gpio == BUTTON_A_PIN && (tempo_atual - ultimo_tempo_botao_a > DEBOUNCE_DELAY)) {
-        numero_exibido = (numero_exibido + 1) % 10; // Incrementa (mantém entre 0 e 9)
-        ultimo_tempo_botao_a = tempo_atual;
-        printf("Botão A - Número exibido: %d\n", numero_exibido);
-    }
-    // Botão B decrementa o número exibido
-    else if (gpio == BUTTON_B_PIN && (tempo_atual - ultimo_tempo_botao_b > DEBOUNCE_DELAY)) {
-        numero_exibido = (numero_exibido + 9) % 10; // Decrementa (mantém entre 0 e 9)
-        ultimo_tempo_botao_b = tempo_atual;
-        printf("Botão B - Número exibido: %d\n", numero_exibido);
-    }
-}
-
-// Função para exibir um número na matriz (0-9)
-void exibir_numero(uint8_t num) {
-    // Padrões para cada número (0-9) em uma matriz 5x5
-    uint32_t padroes_numeros[10][25] = {
-        {1,1,1,1,1, 1,0,0,0,1, 1,0,0,0,1, 1,0,0,0,1, 1,1,1,1,1}, // 0
-        {0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 1,1,1,1,1}, // 1
-        {1,1,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,0,1,1,1}, // 2
-        {1,0,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,1,1,1,1}, // 3
-        {0,0,1,1,1, 0,0,1,0,0, 0,0,1,0,0, 0,0,1,0,0, 1,1,1,1,1}, // 4
-        {1,0,1,1,1, 1,0,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,1,1,0,1}, // 5
-        {1,1,1,1,1, 1,0,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,1,1,0,1}, // 6
-        {0,0,0,0,1, 1,0,0,0,0, 0,0,0,0,1, 1,0,0,0,0, 1,1,1,1,1}, // 7
-        {1,1,1,1,1, 1,0,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,1,1,1,1}, // 8
-        {1,0,1,1,1, 1,0,1,0,1, 1,0,1,0,1, 1,0,1,0,1, 1,1,1,1,1}  // 9
+// Programa para controlar a matriz de LEDs WS2812
+void exibir_numero_na_matriz(uint8_t num)
+{
+    uint32_t padroesNumeros[10][NUM_PIXELS] = {
+        {1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1}, // 0
+        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1}, // 1
+        {1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1}, // 2
+        {1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1}, // 3
+        {0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1}, // 4
+        {1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1}, // 5
+        {1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1}, // 6
+        {0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1}, // 7
+        {1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1}, // 8
+        {1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1}  // 9
     };
 
-    // Atualiza o buffer com o padrão do número selecionado
-    for (int i = 0; i < NUM_PIXELS; i++) {
-        if (padroes_numeros[num][i]) {
-            buffer_leds[i] = converter_rgb_u32(255, 0, 0); // Vermelho
-        } else {
-            buffer_leds[i] = 0; // Desliga o LED
+    // Exibe o número na matriz de LEDs
+    if (num > 9)
+        return;
+    for (int i = 0; i < NUM_PIXELS; i++)
+    {
+        // Define a cor do LED de acordo com o padrão
+        uint32_t cor = padroesNumeros[num][i] ? 0x00FF00 : 0x000000;
+        pio_sm_put_blocking(pio, sm, cor << 8); // Envia a cor para o LED
+    }
+}
+
+void atualizar_display()
+{
+    // Array de mensagens baseadas no estado dos LEDs
+    const char *mensagens[4][2] = {
+        {"Nenhum LED", "Ligado"}, // Estado 0: Ambos desligados
+        {"LED Azul", "Ligado"},  // Estado 1: Apenas o LED azul ligado
+        {"LED Verde", "Ligado"},   // Estado 2: Apenas o LED verde ligado
+        {"Ambos LEDs", "Ligados"} // Estado 3: Ambos ligados
+    };
+
+    // Calcula o índice do estado atual
+    uint8_t estado = (estadoLedVerde << 1) | estadoLedAzul;
+
+    // Limpa o display
+    ssd1306_fill(&ssd, false);
+
+    // Exibe a mensagem correspondente ao estado atual
+    ssd1306_draw_string(&ssd, mensagens[estado][0], 0, 0); // Linha superior
+    ssd1306_draw_string(&ssd, mensagens[estado][1], 0, 8); // Linha inferior
+
+    // Envia os dados para o display
+    ssd1306_send_data(&ssd);
+}
+
+// Função de callback para tratar os botões A e B
+void botao_callback(uint gpio, uint32_t eventos)
+{
+    uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
+
+    // Verifica se ambos os botões estão pressionados
+    if (gpio_get(BOTAO_A) == 0 && gpio_get(BOTAO_B) == 0)
+    {
+        // Verifica se o tempo de debounce foi atingido
+        if (tempo_atual - ultimo_tempo_botao_a > DEBOUNCE_DELAY && tempo_atual - ultimo_tempo_botao_b > DEBOUNCE_DELAY)
+        {
+            estadoLedVerde = true;               // Liga o LED verde
+            estadoLedAzul = true;                // Liga o LED azul
+            gpio_put(LED_VERDE, estadoLedVerde); // Atualiza o estado dos LEDs
+            gpio_put(LED_AZUL, estadoLedAzul);   // Atualiza o estado dos LEDs
+
+            // Exibe a mensagem no console
+            printf("Ambos botoes pressionados. LEDs Verde e Azul ligados.\n");
+            atualizar_display(); // Atualiza o display
+
+            ultimo_tempo_botao_a = tempo_atual; // Atualiza o tempo do botão A
+            ultimo_tempo_botao_b = tempo_atual; // Atualiza o tempo do botão B
+            return;                             // Sai da função após tratar ambos os botões
+        }
+    }
+
+    // Trata o botão A
+    if (gpio == BOTAO_A)
+    {
+        // Verifica se o tempo de debounce foi atingido
+        if (tempo_atual - ultimo_tempo_botao_a > DEBOUNCE_DELAY)
+        {
+            if (gpio_get(BOTAO_A) == 0)
+            {
+                estadoLedVerde = !estadoLedVerde;                                                        // Alterna o estado do LED verde
+                gpio_put(LED_VERDE, estadoLedVerde);                                                     // Atualiza o estado do LED verde
+                printf("Botao A pressionado. LED Verde %s.\n", estadoLedVerde ? "ligado" : "desligado"); // Exibe a mensagem no console
+            }
+            ultimo_tempo_botao_a = tempo_atual; // Atualiza o tempo do botão A
+        }
+    }
+    // Trata o botão B
+    else if (gpio == BOTAO_B)
+    {
+        // Verifica se o tempo de debounce foi atingido
+        if (tempo_atual - ultimo_tempo_botao_b > DEBOUNCE_DELAY)
+        {
+            if (gpio_get(BOTAO_B) == 0)
+            {
+                estadoLedAzul = !estadoLedAzul;                                                        // Alterna o estado do LED azul
+                gpio_put(LED_AZUL, estadoLedAzul);                                                     // Atualiza o estado do LED azul
+                printf("Botao B pressionado. LED Azul %s.\n", estadoLedAzul ? "ligado" : "desligado"); // Exibe a mensagem no console
+            }
+            ultimo_tempo_botao_b = tempo_atual; // Atualiza o tempo do botão B
+        }
+    }
+
+    // Atualiza o display e a matriz
+    uint8_t numero_exibido = (estadoLedVerde || estadoLedAzul) ? 1 : 0; // Exibe 1 se algum LED estiver ligado
+    exibir_numero_na_matriz(numero_exibido);                            // Exibe o número na matriz
+    atualizar_display();                                                // Atualiza o display
+}
+
+// Função para processar caracteres recebidos pela porta serial USB
+void processar_caractere_serial()
+{
+    // Verifica se há caracteres disponíveis na porta serial
+    if (stdio_usb_connected())
+    {
+        int caractere = getchar_timeout_us(0); // Lê um caractere da porta serial
+        // Verifica se o caractere é válido
+        if (caractere != PICO_ERROR_TIMEOUT)
+        {
+            ssd1306_fill(&ssd, false);                 // Limpa o display
+            char buffer[2] = {(char)caractere, '\0'};  // Converte o caractere para uma string
+            ssd1306_draw_string(&ssd, buffer, 40, 20); // Exibe o caractere no display
+            ssd1306_send_data(&ssd);                   // Envia os dados para o display
+
+            // Verifica se o caractere é um dígito
+            if (caractere >= '0' && caractere <= '9')
+            {
+                uint8_t numero = caractere - '0'; // Converte o caractere para um número
+                exibir_numero_na_matriz(numero);  // Exibe o número na matriz
+            }
         }
     }
 }
 
-int main() {
-    stdio_init_all(); // Inicializa a comunicação serial
-    printf("WS2812 5x5 Matrix - Controlando LEDs com Botões A e B\n");
+int main()
+{
+    stdio_init_all(); // Inicializa a porta serial USB
 
-    PIO pio = pio0; // Seleciona o PIO 0
-    int sm = 0; // Seleciona o State Machine 0
-    uint offset = pio_add_program(pio, &ws2812_program); // Carrega o programa para o PIO
+    i2c_init(PORTA_I2C, 400 * 1000);           // Inicializa a porta I2C
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C); // Define o pino SDA como pino I2C
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C); // Define o pino SCL como pino I2C
+    gpio_pull_up(I2C_SDA);                     // Habilita o resistor de pull-up no pino SDA
+    gpio_pull_up(I2C_SCL);                     // Habilita o resistor de pull-up no pino SCL
 
-    // Inicializa o programa para a matriz de LEDs
-    ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
+    gpio_init(LED_VERDE);              // Inicializa o pino do LED verde
+    gpio_set_dir(LED_VERDE, GPIO_OUT); // Define o pino do LED verde como saída
+    gpio_put(LED_VERDE, 0);            // Desliga o LED verde
 
-    // Configuração dos botões
-    gpio_init(BUTTON_A_PIN); // Botão A
-    gpio_set_dir(BUTTON_A_PIN, GPIO_IN); // Define como entrada
-    gpio_pull_up(BUTTON_A_PIN); // Habilita resistor de pull-up
-    gpio_set_irq_enabled(BUTTON_A_PIN, GPIO_IRQ_EDGE_FALL, true); // Habilita interrupção de borda de descida
+    gpio_init(LED_AZUL);              // Inicializa o pino do LED azul
+    gpio_set_dir(LED_AZUL, GPIO_OUT); // Define o pino do LED azul como saída
+    gpio_put(LED_AZUL, 0);            // Desliga o LED azul
 
-    gpio_init(BUTTON_B_PIN); // Botão B
-    gpio_set_dir(BUTTON_B_PIN, GPIO_IN); // Define como entrada
-    gpio_pull_up(BUTTON_B_PIN); // Habilita resistor de pull-up
-    gpio_set_irq_enabled(BUTTON_B_PIN, GPIO_IRQ_EDGE_FALL, true); // Habilita interrupção de borda de descida
+    gpio_init(BOTAO_A);                                      // Inicializa o pino do botão A
+    gpio_set_dir(BOTAO_A, GPIO_IN);                          // Define o pino do botão A como entrada
+    gpio_pull_up(BOTAO_A);                                   // Habilita o resistor de pull-up no pino do botão A
+    gpio_set_irq_enabled(BOTAO_A, GPIO_IRQ_EDGE_FALL, true); // Habilita a interrupção por borda de descida no botão A
 
-    // Apenas um callback para ambos os botões
-    gpio_set_irq_enabled_with_callback(BUTTON_A_PIN, GPIO_IRQ_EDGE_FALL, true, &botao_callback); 
-    gpio_set_irq_enabled_with_callback(BUTTON_B_PIN, GPIO_IRQ_EDGE_FALL, true, &botao_callback);
+    gpio_init(BOTAO_B);                                      // Inicializa o pino do botão B
+    gpio_set_dir(BOTAO_B, GPIO_IN);                          // Define o pino do botão B como entrada
+    gpio_pull_up(BOTAO_B);                                   // Habilita o resistor de pull-up no pino do botão B
+    gpio_set_irq_enabled(BOTAO_B, GPIO_IRQ_EDGE_FALL, true); // Habilita a interrupção por borda de descida no botão B
 
-    // Configuração do LED RGB
-    gpio_init(LED_RGB_RED_PIN); // LED RGB vermelho
-    gpio_set_dir(LED_RGB_RED_PIN, GPIO_OUT); // Define como saída
-    gpio_init(LED_RGB_GREEN_PIN); // LED RGB verde
-    gpio_set_dir(LED_RGB_GREEN_PIN, GPIO_OUT); // Define como saída
-    gpio_init(LED_RGB_BLUE_PIN); // LED RGB azul
-    gpio_set_dir(LED_RGB_BLUE_PIN, GPIO_OUT); // Define como saída
+    ssd1306_init(&ssd, WIDTH, HEIGHT, false, 0x3C, PORTA_I2C); // Inicializa o display
+    ssd1306_config(&ssd);                                      // Configura o display
+    ssd1306_send_data(&ssd);                                   // Envia os dados para o display
+    ssd1306_fill(&ssd, false);                                 // Limpa o display
+    ssd1306_send_data(&ssd);                                   // Envia os dados para o display
 
-    bool estado_led_rgb = false; // Estado do LED RGB
-    uint32_t ultimo_tempo_troca_led_rgb = 0; // Último tempo de troca do LED RGB
+    gpio_set_irq_enabled_with_callback(BOTAO_A, GPIO_IRQ_EDGE_FALL, true, &botao_callback); // Habilita a interrupção por borda de descida no botão A
+    gpio_set_irq_enabled_with_callback(BOTAO_B, GPIO_IRQ_EDGE_FALL, true, &botao_callback); // Habilita a interrupção por borda de descida no botão B
 
-    // Loop principal para exibir o número na matriz de LEDs
-    while (1) {
-        // Atualiza o buffer com o número a ser exibido
-        exibir_numero(numero_exibido);
+    offset = pio_add_program(pio, &ws2812_program);                   // Adiciona o programa ao PIO
+    sm = pio_claim_unused_sm(pio, true);                              // Reivindica uma máquina de estado
+    ws2812_program_init(pio, sm, offset, PINO_MATRIZ, 800000, false); // Inicializa o programa WS2812 no PIO e no pino da matriz de LEDs
 
-        // Envia o estado do buffer para a matriz de LEDs
-        definir_leds_do_buffer();
-
-        // Controle do LED RGB piscando 5 vezes por segundo
-        uint32_t tempo_atual = to_ms_since_boot(get_absolute_time()); // Tempo atual em milissegundos
-        if (tempo_atual - ultimo_tempo_troca_led_rgb >= 100) {
-            estado_led_rgb = !estado_led_rgb; // Inverte o estado do LED RGB
-            gpio_put(LED_RGB_RED_PIN, estado_led_rgb); // Define o estado do LED RGB vermelho
-            gpio_put(LED_RGB_GREEN_PIN, 0); // Desliga o LED RGB verde
-            gpio_put(LED_RGB_BLUE_PIN, 0); // Desliga o LED RGB azul
-            ultimo_tempo_troca_led_rgb = tempo_atual; // Atualiza o tempo da última troca
-        }
-
-        // Aguarda um pouco para evitar uso excessivo da CPU (10 ms) e continuar o loop
-        sleep_ms(10);
+    // Loop principal do programa
+    while (true)
+    {
+        processar_caractere_serial(); // Processa os caracteres recebidos pela porta serial
+        sleep_ms(100);                // Aguarda 100 ms
     }
 
-    return 0;
+    return 0; // Retorna 0
 }
